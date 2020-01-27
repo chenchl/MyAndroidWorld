@@ -1,6 +1,156 @@
-# Android复习题
+## java基础
 
-## java
+### java基础知识
+
+#### 多态
+
+1. 所谓多态就是指程序中定义的引用变量所指向的具体类型和通过该引用变量发出的方法调用在编程时并不确定，而是在程序运行期间才确定，
+   即一个引用变量到底会指向哪个类的实例对象，该引用变量发出的方法调用到底是哪个类中实现的方法，必须在由程序运行期间才能决定。
+   因为在程序运行时才确定具体的类，这样，不用修改源程序代码，就可以让引用变量绑定到各种不同的类实现上，从而导致该引用变量调用的具体方法随之改变，
+   即不修改程序代码就可以改变程序运行时所绑定的具体代码，让程序可以选择多个运行状态，这就是多态性。
+2. java实现多态的三个必要条件：
+   1. 继承:在多态中必须存在有继承关系的子类和父类。
+   2. 重写:子类对父类中某些方法进行重新定义，在调用这些方法时就会调用子类的方法。
+   3. 向上转型:父类引用指向子类对象
+
+#### 抽象类和接口
+
+1. 抽象类要被子类继承，接口要被类实现
+2. 接口只能做方法声明，抽象类中可以作方法声明，也可以做方法实现。（java 1.8接口可以包含默认实现）
+3. 接口里定义的变量只能是公共的静态的常量，抽象类中的变量是普通变量。
+4. 抽象类可以有具体的方法和属性，接口只能有抽象方法和不可变常量。
+5. 使用场景
+   1. 在既需要统一的接口，又需要实例变量或缺省的方法的情况下，就可以使用它
+   2. 大多数情况下组合大于继承 因为java的是单继承模式
+6. 父类的静态方法不能被子类重写 可以被子类继承使用
+
+*静态内部类不持有外部内的引用 不会造成内存泄漏的风险 在Android常用于handler对象使用
+
+#### final，finally，finalize的区别
+
+1. final final修饰类表示类不能被继承 修饰方法方法不能被子类重写 修饰变量类似于const 只能被赋值一次 （直接声明时赋值或者在类构造方法里赋值）
+2. finally 配合try catch表示一定要执行的语句
+3. finalize object类定义的 一般不需要重写 在GC时会被调用 (Android中体现在bitmap回收native层像素数据时会用到)
+
+#### 序列化
+
+1. Serializable 继承接口即可  子类可继承 会自动序列化非static transient变量
+2. Parcelable 由于Serializable IO操作频繁 Parcelable性能更好 主要用于内存间传递数据，不适合本地持久化或者网络传输，需要实现其抽象方法(Android特有，binder传输中的数据就是采用该形式)
+
+#### 代理模式
+
+##### 静态代理
+
+一种设计模式 [代理](https://blog.csdn.net/asd051377305/article/details/80490432)
+
+##### 动态代理
+
+1. 创建一个类继承InvocationHandler类 同时重写其构造方法传入具体实现对象类
+2. 调用Proxy.newProxyInstance 获取具体实现类，参数一传入classloader 参数二为对象类的接口class 参数三InvocationHandler （在android中retrofit是典型应用场景）
+
+#### ThreadLocal
+
+1. ThreadLocal是通过每个线程单独一份存储空间，牺牲空间来解决冲突，并且相比于Synchronized，ThreadLocal具有线程隔离的效果，只有在线程内才能获取到对应的值，线程外则不能访问到想要的值。（在android中的典型应用场景即为Looper  同时在perpare前先get是否存在来保证线程唯一）
+
+2. 每个线程Thread类中又一个ThreadLocalMap用于存放当前线程的ThreadLocal变量  其中每个元素Entry包含key value 属性 其set get代码如下 很好理解
+
+   ```java
+   //set 方法
+   public void set(T value) {
+         //获取当前线程
+         Thread t = Thread.currentThread();
+         //实际存储的数据结构类型
+         ThreadLocalMap map = getMap(t);
+         //如果存在map就直接set，没有则创建map并set
+         if (map != null)
+             map.set(this, value);
+         else
+             createMap(t, value);
+     }
+   
+   //ThreadLocal中get方法
+   public T get() {
+       Thread t = Thread.currentThread();
+       ThreadLocalMap map = getMap(t);
+       if (map != null) {
+           ThreadLocalMap.Entry e = map.getEntry(this);
+           if (e != null) {
+               @SuppressWarnings("unchecked")
+               T result = (T)e.value;
+               return result;
+           }
+       }
+       return setInitialValue();
+   }
+   ```
+
+#### 注解
+
+##### java元注解
+
+​	注解的注解
+
+1. @Target 用于描述注解作用域
+
+   - CONSTRUCTOR:用于描述构造器
+   - FIELD:用于描述域即类成员变量
+   - LOCAL_VARIABLE:用于描述局部变量
+   - METHOD:用于描述方法
+   - PACKAGE:用于描述包
+   - PARAMETER:用于描述参数
+   - TYPE:用于描述类、接口(包括注解类型) 或enum声明
+   - TYPE_PARAMETER:1.8版本开始，描述类、接口或enum参数的声明
+   - TYPE_USE:1.8版本开始，描述一种类、接口或enum的使用声明
+
+2. @Retention 用于描述注解生命周期
+
+   - SOURCE:在源文件中有效（即源文件保留）
+   - CLASS:在class文件中有效（即class保留）
+   - RUNTIME:在运行时有效（即运行时保留）
+
+3. @Documented
+
+   用于描述其它类型的annotation应该被作为被标注的程序成员的公共API，因此可以被例如javadoc此类的工具文档化。它是一个标记注解，没有成员
+
+4. @Inherited
+
+   用于表示某个被标注的类型是可以被继承的。如果一个使用了@Inherited修饰的annotation类型被用于一个class，则这个annotation将被用于该class的子类。
+
+##### 运行时注解的基本Api
+
+1. class.isAnnotationPresent() 用于获取class是否被指定注解所修饰
+
+2. class.getAnnotation()根据注解class获取注解的实例对象
+
+3. class.getAnnotations()获取当前类对象的所有修饰注解数组
+
+   *field method同理 根据反射获取即可
+
+   getDeclaredXXX代表的含义是不包含继承的方法 、注释
+
+#### 反射
+
+##### [反射的含义](https://www.jianshu.com/p/9be58ee20dee)
+
+JAVA反射机制是在运行状态中，对于任意一个类，都能够知道这个类的所有属性和方法；对于任意一个对象，都能够调用它的任意方法和属性；在日常开发中应用广泛 多用于hook系统类 方法 属性 （gson 序列化、retrofit等等均有实际应用）性能开销较大 
+
+#### 泛型
+
+泛型的用处和优点
+
+1. 类型安全 
+
+   泛型的主要目标是实现java的类型安全。 泛型可以使编译器知道一个对象的限定类型是什么，这样编译器就可以在一个高的程度上验证这个类型 在我们写代码的时候就会及时提示错误
+
+2. 消除了强制类型转换 
+
+   使得代码可读性好，减少了很多出错的机会
+
+泛型的实现原理
+
+主要靠的是类型擦除技术 编译器在编译的时候会擦除掉所有类型相关的信息，因此在运行期是无法获取到泛型对象的类信息的（kotlin inline方法可以使用reified关键字来获取）
+
+
 
 ### 集合（collection）
 
