@@ -1321,7 +1321,58 @@ public class AppContext extends BlockCanaryContext {
 
 ####  android IPC机制（binder）
 
-####  android app启动流程
+##### 1.整体架构
+
+![binder架构](https://upload-images.jianshu.io/upload_images/11725840-c2844092b3f47a6b.png?imageMogr2/auto-orient/strip|imageView2/2/w/921/format/webp)
+
+##### 2.Android为什么首选binder作为ipc通讯机制
+
+- 传输性能
+
+  socket作为一款通用接口，其传输效率低，开销大，主要用在跨网络的进程间通信和本机上进程间的低速通信。
+
+  消息队列和管道采用存储-转发方式，即数据先从发送方缓存区拷贝到内核开辟的缓存区中，然后再从内核缓存区拷贝到接收方缓存区，至少有两次拷贝过程。
+
+  共享内存虽然无需拷贝，但控制复杂，难以使用。
+
+  | IPC                  | 数据拷贝次数 |
+  | -------------------- | ------------ |
+  | 共享内存             | 0            |
+  | Binder               | 1            |
+  | Socket/管道/消息队列 | 2            |
+
+- 安全性
+
+  传统IPC没有任何安全措施，完全依赖上层协议来确保。首先传统IPC的接收方无法获得对方进程可靠的UID/PID（用户ID/进程ID），从而无法鉴别对方身份。Android为每个安装好的应用程序分配了自己的UID，故进程的UID是鉴别进程身份的重要标志。使用传统IPC只能由用户在数据包里填入UID/PID，但这样不可靠，容易被恶意程序利用。可靠的身份标记只有由IPC机制本身在内核中添加。其次传统IPC访问接入点是开放的，无法建立私有通道。
+
+  Binder基于 Client-Server通信模式，传输过程只需一次拷贝，为发送方添加UID/PID身份，既支持实名Binder也支持匿名Binder，安全性高。
+
+##### 3.binder工作大致流程
+
+![binder工作流程](https://upload-images.jianshu.io/upload_images/11725840-2d96e28d052ad15e.png?imageMogr2/auto-orient/strip|imageView2/2/w/368/format/webp)
+
+- server注册服务
+
+  首先需要注册服务端，只有注册了服务端，客户端才有通讯的目标，服务端通过 ServiceManager 注册服务，注册的过程就是向 Binder 驱动的全局链表 binder_procs 中插入服务端的信息（服务的实体类代理对象地址），然后向 ServiceManager 的 svcinfo 列表中注册服务信息（服务唯一名称以及服务实体代理对象地址）
+
+- client查找服务
+
+  注册完服务后客户端就能够查询并获取注册了的服务了。客户端向ServiceManager 发起获取服务的请求，传递要获取服务的名称。ServiceManager 从服务列表中查找到Client需要的对应服务信息，将该服务的代理Binder（BinderProxy）返回给客户端。其实查询服务相当于ServiceManager 作为服务端，客户端进行使用。所以这也是一次Binder使用服务的过程。
+
+- client端使用服务
+
+  ![binder通讯过程](https://upload-images.jianshu.io/upload_images/8398510-2d75212b21b03f00?imageMogr2/auto-orient/strip|imageView2/2/w/894/format/webp)
+
+  使用服务的过程如上图。
+
+  1. Binder驱动为跨进程通信做准备：通过调用mmap()系统函数实现内存映射。在Binder驱动中创建一块接收缓存区。同时将内核缓存区地址和Server端中用户空间一块地址同时都映射到该接收缓存区中。这时候就创建了虚拟区间和映射的关系。（内核缓冲区映射binder接受缓存区，binder接受缓存区映射用户空间地址）
+  2. Client进程将数据发送到Server进程：Client进程通过调用copy_from_user()发送数据拷贝到内核中（Binder驱动）的缓存区中，此时Client发起请求的线程会被挂起（transtant（用户当前发起线程 ））。由于在①中构建了映射关系，此时相当于也将数据发送到了Server端的用户空间中。之后Binder驱动通知Server端进程执行解包。
+  3. Server进程根据Client进程发送来的数据，通过onTranstant（server端binder线程池，默认大小16）解包后调用目标方法。
+  4. Server进程将目标方法处理结果返回给Client进程：将处理结果放回自己的共享空间（即①中映射的Binder驱动缓存区中）。Binder驱动通知Client进程获取返回结果，此时②中被挂起的线程会被重新唤醒。Client进程通过系统调用copy_to_user(),从内核缓存区拷贝Server进程返回的结果。
+
+
+
+#### android app启动流程
 
 ##### 1.整体流程
 
