@@ -975,9 +975,232 @@ public class AppContext extends BlockCanaryContext {
      ```
 
   2. 调用navigation方法来解析postcard中的path信息 在路由表中找到对应的路由routemeta信息后解析
+  
+     ```java
+     private Object _navigation(final Context context, final Postcard postcard, final int requestCode, final NavigationCallback callback) {
+             final Context currentContext = null == context ? mContext : context;
+     
+             switch (postcard.getType()) {
+                 case ACTIVITY:
+                     // Build intent
+                     final Intent intent = new Intent(currentContext, postcard.getDestination());
+                     intent.putExtras(postcard.getExtras());
+     
+                     // Set flags.
+                     int flags = postcard.getFlags();
+                     if (-1 != flags) {
+                         intent.setFlags(flags);
+                     } else if (!(currentContext instanceof Activity)) {    // Non activity, need less one flag.
+                         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                     }
+     
+                     // Set Actions
+                     String action = postcard.getAction();
+                     if (!TextUtils.isEmpty(action)) {
+                         intent.setAction(action);
+                     }
+     
+                     // Navigation in main looper.
+                     runInMainThread(new Runnable() {
+                         @Override
+                         public void run() {
+                             startActivity(requestCode, currentContext, intent, postcard, callback);
+                         }
+                     });
+     
+                     break;
+                 case PROVIDER:
+                     return postcard.getProvider();
+                 case BOARDCAST:
+                 case CONTENT_PROVIDER:
+                 case FRAGMENT:
+                     Class fragmentMeta = postcard.getDestination();
+                     try {
+                         Object instance = fragmentMeta.getConstructor().newInstance();
+                         if (instance instanceof Fragment) {
+                             ((Fragment) instance).setArguments(postcard.getExtras());
+                         } else if (instance instanceof android.support.v4.app.Fragment) {
+                             ((android.support.v4.app.Fragment) instance).setArguments(postcard.getExtras());
+                         }
+     
+                         return instance;
+                     } catch (Exception ex) {
+                         logger.error(Consts.TAG, "Fetch fragment instance error, " + TextUtils.formatStackTrace(ex.getStackTrace()));
+                     }
+                 case METHOD:
+                 case SERVICE:
+                 default:
+                     return null;
+             }
+     
+             return null;
+         }
+     ```
 
+#### 热修复
 
+##### 1.代码热修复
 
+- Sophix:由补丁类的classLoader加载补丁类，在native层直接memcpy(smeth,dmth,sizeof(ArtMethod))替换整个artMethod的结构。视情况而定可即时生效
+- qq超级补丁:原理是Hook了ClassLoader.pathList.dexElements[]。因为ClassLoader的findClass是通过遍历dexElements[]中的dex来寻找类的,越靠前的Dex优先被系统使用，基于类级别的修复。缺点是虚拟机在安装期间为类打上CLASS_ISPREVERIFIED标志是为了提高性能的，如果使用这种方案的话就必须将该标志位清除，清除方案是单独放一个辅助类在独立的dex中让其他类调用，阻止类在dexopt时被打伤CLASS_ISPREVERIFIED标记，对性能有一定影响，冷启动生效
+- 微信tinker:服务端做dex差量，将差量包下发到客户端，在ART模式的机型上本地跟原apk中的classes.dex做merge，merge成为一个新的merge.dex后将merge.dex插入pathClassLoader的dexElement，原理类同qq超级补丁:,冷启动生效，性能开销较大 有oom风险
+
+##### 2.资源热修复
+
+（换肤框架的原理也大致是这个）
+
+- 常规方案是类似于instant run实现 构建一个新的assetmanager类 反射调用addassetpath加载补丁资源apk路径后将这个新构建的assetmanager类反射替换所有使用assetmanger的地方（主要是各级context的resource）
+- sophix的方案是在aapt是动态修改资源id为0x66起始 这样避免了和现有的资源ID0x7f冲突 然后直接在现有的所有assetmanager中反射调用addassetpath将新资源apk加载进去即可（android L后）
+
+##### 3.动态库so替换
+
+- 常规方案是使用system.load替换system.loadlibrary来指定so库路径去加载做到冷起生效
+- sophix的方案是类似冷起类修复的方案，通过反射将补丁so库的路径插入到nativeLibraryDirectories的首位，达到优先加载补丁so而跳过原始bug so的目的
+
+#### 插件化框架replugin
+
+##### 1.优势
+
+- hook点仅一处（替换系统classloader），稳定性高
+- 接入简单 插件尽可能的可以像单品一样开发 可独立安装运行
+
+##### 2.原理简析
+
+- replugin-host-gradle(宿主gradle工程)
+
+  主要作用是进行宿主应用的构建任务，生成带插件坑位的AndroidManifest.xml，插件坑位可在宿主工程的gradle文件的repluginHostConfig中进行配置。以及生成包含插件信息的plugins-builtin.json文件。
+
+- replugin-host-library(宿主lib工程)
+
+  - 首先需要在宿主工程的application的attachBaseContext中调用RePlugin.App.attachBaseContext(this)进行classloader的hook
+
+  ```java
+  public static void attachBaseContext(Application app, RePluginConfig config) {
+              if (sAttached) {
+                  if (LogDebug.LOG) {
+                      LogDebug.d(TAG, "attachBaseContext: Already called");
+                  }
+                  return;
+              }
+  
+              RePluginInternal.init(app);
+              sConfig = config;
+              sConfig.initDefaults(app);
+  
+              IPC.init(app);
+  
+              // 打印当前内存占用情况
+              // 只有开启“详细日志”才会输出，防止“消耗性能”
+              if (LOG && RePlugin.getConfig().isPrintDetailLog()) {
+                  LogDebug.printMemoryStatus(LogDebug.TAG, "act=, init, flag=, Start, pn=, framework, func=, attachBaseContext, lib=, RePlugin");
+              }
+  
+              // 初始化HostConfigHelper（通过反射HostConfig来实现）
+              // NOTE 一定要在IPC类初始化之后才使用
+              HostConfigHelper.init();
+  
+              // FIXME 此处需要优化掉
+              AppVar.sAppContext = app;
+  
+              // Plugin Status Controller
+              PluginStatusController.setAppContext(app);
+  
+              PMF.init(app);
+              PMF.callAttach();
+  
+              sAttached = true;
+          }
+  
+  public static final void init(Application application) {
+          setApplicationContext(application);
+  
+          PluginManager.init(application);
+  
+          sPluginMgr = new PmBase(application);
+          sPluginMgr.init();
+  
+          Factory.sPluginManager = PMF.getLocal();
+          Factory2.sPLProxy = PMF.getInternal();
+  		//这里进行hook
+          PatchClassLoaderUtils.patch(application);
+      }
+  
+  public class PatchClassLoaderUtils {
+  
+      private static final String TAG = "PatchClassLoaderUtils";
+  
+      public static boolean patch(Application application) {
+          try {
+              // 获取Application的BaseContext （来自ContextWrapper）
+              Context oBase = application.getBaseContext();
+              if (oBase == null) {
+                  if (LOGR) {
+                      LogRelease.e(PLUGIN_TAG, "pclu.p: nf mb. ap cl=" + application.getClass());
+                  }
+                  return false;
+              }
+  
+              // 获取mBase.mPackageInfo
+              // 1. ApplicationContext - Android 2.1
+              // 2. ContextImpl - Android 2.2 and higher
+              // 3. AppContextImpl - Android 2.2 and higher
+              Object oPackageInfo = ReflectUtils.readField(oBase, "mPackageInfo");
+              if (oPackageInfo == null) {
+                  if (LOGR) {
+                      LogRelease.e(PLUGIN_TAG, "pclu.p: nf mpi. mb cl=" + oBase.getClass());
+                  }
+                  return false;
+              }
+  
+              // mPackageInfo的类型主要有两种：
+              // 1. android.app.ActivityThread$PackageInfo - Android 2.1 - 2.3
+              // 2. android.app.LoadedApk - Android 2.3.3 and higher
+              if (LOG) {
+                  Log.d(TAG, "patch: mBase cl=" + oBase.getClass() + "; mPackageInfo cl=" + oPackageInfo.getClass());
+              }
+  
+              // 获取mPackageInfo.mClassLoader
+              ClassLoader oClassLoader = (ClassLoader) ReflectUtils.readField(oPackageInfo, "mClassLoader");
+              if (oClassLoader == null) {
+                  if (LOGR) {
+                      LogRelease.e(PLUGIN_TAG, "pclu.p: nf mpi. mb cl=" + oBase.getClass() + "; mpi cl=" + oPackageInfo.getClass());
+                  }
+                  return false;
+              }
+  
+              // 外界可自定义ClassLoader的实现，但一定要基于RePluginClassLoader类
+              ClassLoader cl = RePlugin.getConfig().getCallbacks().createClassLoader(oClassLoader.getParent(), oClassLoader);
+  
+              // 将新的ClassLoader写入mPackageInfo.mClassLoader
+              ReflectUtils.writeField(oPackageInfo, "mClassLoader", cl);
+  
+              // 设置线程上下文中的ClassLoader为RePluginClassLoader
+              Thread.currentThread().setContextClassLoader(cl);
+  
+              if (LOG) {
+                  Log.d(TAG, "patch: patch mClassLoader ok");
+              }
+          } catch (Throwable e) {
+              e.printStackTrace();
+              return false;
+          }
+          return true;
+      }
+  }
+  ```
+
+  - 使用RePlugin.install去加载并解析指定路径的apk文件
+  - 使用Replugin.startActivity启动插件apk的activity 首先解析要启动的activity的启动信息（task栈 进程 启动模式等等），后根据这些信息去找到合适的坑位，然后先去直接尝试启动坑位的activity，在启动过程中由于之前已经hook了mclassloader，因此mclassloader会自动在加载坑位activity时去加载插件的apk的对应activity实例
+
+- replugin-plugin-gradle(插件gradle aop工程)
+
+  基于Gradle的Transform API，在编译期的构建任务流中，在class转为dex之前，插入一个Transform，基于Javassist技术实现对字节码文件的注入，修改Activity的继承关系、Provider和LocalBroadcastManager的调用代码为插件库的调用代码。
+
+  *主要就是替换activity基类为plugin library中的activity包装类，实际上经测试不接入的话直接继承lib库中对应的基类也是可以的
+
+- replugin-plugin-library(插件lib工程)
+
+  用于收集整理插件apk的minifest信息，同时提供必要的通讯接口用于获取宿主的各种资源以及和宿主进行通讯
 
 ### Android 系统相关源码
 
