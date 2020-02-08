@@ -498,9 +498,13 @@ public class AppContext extends BlockCanaryContext {
   其中threadMode属性有如下几个可选值：
 
   **ThreadMode.POSTING**，默认的线程模式，在那个线程发送事件就在对应线程处理事件，避免了线程切换，效率高。
+
   **ThreadMode.MAIN**，如在主线程（UI线程）发送事件，则直接在主线程处理事件；如果在子线程发送事件，则先将事件入队列，然后通过 Handler 切换到主线程，依次处理事件。
+
   **ThreadMode.MAIN_ORDERED**，无论在那个线程发送事件，都先将事件入队列，然后通过 Handler 切换到主线程，依次处理事件。
+
   **ThreadMode.BACKGROUND**，如果在主线程发送事件，则先将事件入队列，然后通过线程池依次处理事件；如果在子线程发送事件，则直接在发送事件的线程处理事件。
+
   **ThreadMode.ASYNC**，无论在那个线程发送事件，都将事件入队列，然后通过线程池处理。
 
 - register
@@ -1055,7 +1059,7 @@ public class AppContext extends BlockCanaryContext {
 ##### 3.动态库so替换
 
 - 常规方案是使用system.load替换system.loadlibrary来指定so库路径去加载做到冷起生效
-- sophix的方案是类似冷起类修复的方案，通过反射将补丁so库的路径插入到nativeLibraryDirectories的首位，达到优先加载补丁so而跳过原始bug so的目的
+- sophix的方案是类似冷启类修复的方案，通过反射将补丁so库的路径插入到nativeLibraryDirectories的首位，达到优先加载补丁so而跳过原始bug so的目的
 
 #### 插件化框架replugin
 
@@ -1349,7 +1353,7 @@ public class AppContext extends BlockCanaryContext {
                     Message msg = mMessages;
                     //拿出队首的消息来
                     if (msg != null && msg.target == null) {
-                        //招不到target的话就跳过继续遍历下一条消息
+                        //找不到target的话就跳过继续遍历下一条消息
                         // Stalled by a barrier.  Find the next asynchronous message in the queue.
                         do {
                             prevMsg = msg;
