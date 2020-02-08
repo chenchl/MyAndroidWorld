@@ -1,4 +1,4 @@
-## Android
+## Android开源库原理
 
 ### 主流开源库源码
 
@@ -1086,15 +1086,10 @@ public class AppContext extends BlockCanaryContext {
               RePluginInternal.init(app);
               sConfig = config;
               sConfig.initDefaults(app);
-  
+  			//启动独立进程远程调用
               IPC.init(app);
   
-              // 打印当前内存占用情况
-              // 只有开启“详细日志”才会输出，防止“消耗性能”
-              if (LOG && RePlugin.getConfig().isPrintDetailLog()) {
-                  LogDebug.printMemoryStatus(LogDebug.TAG, "act=, init, flag=, Start, pn=, framework, func=, attachBaseContext, lib=, RePlugin");
-              }
-  
+     
               // 初始化HostConfigHelper（通过反射HostConfig来实现）
               // NOTE 一定要在IPC类初始化之后才使用
               HostConfigHelper.init();
@@ -1110,7 +1105,7 @@ public class AppContext extends BlockCanaryContext {
   
               sAttached = true;
           }
-  
+  //PMF
   public static final void init(Application application) {
           setApplicationContext(application);
   
@@ -1188,10 +1183,10 @@ public class AppContext extends BlockCanaryContext {
       }
   }
   ```
-
+  
   - 使用RePlugin.install去加载并解析指定路径的apk文件
   - 使用Replugin.startActivity启动插件apk的activity 首先解析要启动的activity的启动信息（task栈 进程 启动模式等等），后根据这些信息去找到合适的坑位，然后先去直接尝试启动坑位的activity，在启动过程中由于之前已经hook了mclassloader，因此mclassloader会自动在加载坑位activity时去加载插件的apk的对应activity实例
-
+  
 - replugin-plugin-gradle(插件gradle aop工程)
 
   基于Gradle的Transform API，在编译期的构建任务流中，在class转为dex之前，插入一个Transform，基于Javassist技术实现对字节码文件的注入，修改Activity的继承关系、Provider和LocalBroadcastManager的调用代码为插件库的调用代码。
