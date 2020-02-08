@@ -668,7 +668,702 @@ public class Test1 {
 }
 ```
 
+### 常用设计模式
 
+#### 1.观察者模式
+
+- Android中使用最广泛的一种设计模式，点击事件监听 handler okhttp网络回调等等均有实际应用
+
+  ```java
+  //实体
+  public class Weather {  
+   
+      private String description;  
+    
+      public Weather(String description) {  
+          this.description = description;  
+      }  
+    
+      public String getDescription() {  
+          return description;  
+      }  
+    
+      public void setDescription(String description) {  
+          this.description = description;  
+      }  
+  } 
+  //观察者管理器
+  public class Observable<T> {  
+      List<Observer<T>> mObservers = new ArrayList<Observer<T>>();  
+    	//注册观察者
+      public void register(Observer<T> observer) {  
+          if (observer == null) {  
+              throw new NullPointerException("observer == null");  
+          }  
+          synchronized (this) {  
+              if (!mObservers.contains(observer))  
+                  mObservers.add(observer);  
+          }  
+      }  
+    	//解除注册观察者
+      public synchronized void unregister(Observer<T> observer) {  
+          mObservers.remove(observer);  
+      }  
+    	//通知观察者变化
+      public void notifyObservers(T data) {  
+          for (Observer<T> observer : mObservers) {  
+              observer.onUpdate(this, data);  
+          }  
+      }  
+  } 
+  //观察者接口
+  public interface Observer<T> {  
+      void onUpdate(Observable<T> observable,T data);  
+  } 
+  
+  //使用
+  public static void main(String [] args){  
+          Observable<Weather> observable=new Observable<Weather>();  
+          Observer<Weather> observer1=new Observer<Weather>() {  
+              @Override  
+              public void onUpdate(Observable<Weather> observable, Weather data) {  
+                  System.out.println("观察者1："+data.toString());  
+              }  
+          };  
+          Observer<Weather> observer2=new Observer<Weather>() {  
+              @Override  
+              public void onUpdate(Observable<Weather> observable, Weather data) {  
+                  System.out.println("观察者2："+data.toString());  
+              }  
+          };  
+    
+          observable.register(observer1);  
+          observable.register(observer2);  
+  
+          Weather weather=new Weather("晴转多云");  
+          observable.notifyObservers(weather);  
+    
+          Weather weather1=new Weather("多云转阴");  
+          observable.notifyObservers(weather1);  
+    
+          observable.unregister(observer1);  
+    
+          Weather weather2=new Weather("台风");  
+          observable.notifyObservers(weather2);  
+    
+      }  
+  ```
+
+#### 2.代理模式
+
+- 静态代理
+
+  ```java
+  //接口
+  public interface Skill {
+   
+      /**
+       * 唱歌
+       * @param name
+       */
+      void sing(String name);
+   
+      /**
+       * 演出
+       * @param name
+       */
+      void perform(String name);
+   
+      /**
+       * 综艺节目
+       * @param name
+       */
+      void variety(String name);
+   
+  }
+  
+  //具体实现类
+  public class YingBao implements Skill {
+   
+      @Override
+      public void sing(String name) {
+          System.out.println("颖宝唱了一首[" + name + "]");
+      }
+   
+      @Override
+      public void perform(String name) {
+          System.out.println("颖宝出演了[" + name + "]");
+      }
+   
+      @Override
+      public void variety(String name) {
+          System.out.println("颖宝上[" + name + "]综艺节目");
+      }
+   
+  }
+  
+  //代理实现类
+  public class YingBaoProxy implements Skill {
+   
+      //保存被代理人的实例
+      private Skill yb;
+   
+      public YingBaoProxy(Skill skill) {
+          this.yb = skill;
+      }
+   
+      //代理人实际是让颖宝去做事情
+   
+      @Override
+      public void sing(String name) {
+          yb.sing(name);
+      }
+   
+      @Override
+      public void perform(String name) {
+          yb.perform(name);
+      }
+   
+      @Override
+      public void variety(String name) {
+          yb.variety(name);
+      }
+   
+  }
+  
+  //使用
+  public static void main(String[] args) {
+          YingBaoProxy ybp = new YingBaoProxy(new YingBao());
+          ybp.sing("北京北京");
+          ybp.perform("陆贞传奇");
+          ybp.variety("天天向上");
+      }
+  ```
+
+- 动态代理
+
+  动态代理本质是利用反射去调用真正的实现类 在Android中典型场景是retrofit的核心实现 根据定义的API接口方法去包装成实体请求类传递给方法的返回对象
+
+  - InvocationHandler
+
+    该接口中仅定义了一个方法Object：invoke(Object obj,Method method,Object[] args）。在实际使用时，第一个参数obj一般是指代理类，method是被代理的方法，args为该方法的参数数组。这个抽象方法在代理类中动态实现。
+
+  - Proxy
+
+    Static Object newProxyInstance(ClassLoader loader,Class[] interfaces,InvocationHandler h）：返回代理类的一个实例，返回后的代理类可以当作被代理类使用（可使用被代理类的在Subject接口中声明过的方法）。（第一个参数为实体类的classloader，第二个参数是实体抽象接口 第三个参数是实现了InvocationHandler的实现类）
+
+  ```java
+  //接口
+  public interface Skill {
+   
+      /**
+       * 唱歌
+       * @param name
+       */
+      void sing(String name);
+   
+      /**
+       * 演出
+       * @param name
+       */
+      void perform(String name);
+   
+      /**
+       * 综艺节目
+       * @param name
+       */
+      void variety(String name);
+   
+  }
+  
+  //具体实现类
+  public class YingBao implements Skill {
+   
+      @Override
+      public void sing(String name) {
+          System.out.println("颖宝唱了一首[" + name + "]");
+      }
+   
+      @Override
+      public void perform(String name) {
+          System.out.println("颖宝出演了[" + name + "]");
+      }
+   
+      @Override
+      public void variety(String name) {
+          System.out.println("颖宝上[" + name + "]综艺节目");
+      }
+   
+  }
+  
+  //InvocationHandler
+  public class MyInvocationHandler implements InvocationHandler {
+   
+      private Object obj;//被代理类实例
+   
+      public MyInvocationHandler(Object obj) {
+          this.obj = obj;
+      }
+   
+      @Override
+      public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+          System.out.println("代理对象要处理的公共逻辑可以统一写到这里");
+          Object invoke = method.invoke(obj, args);
+          return invoke;
+      }
+   
+  }
+  
+  //使用
+  public static void main(String[] args) throws Exception {
+          Skill yb = new YingBao();
+          //创建调度对象
+          MyInvocationHandler mih = new MyInvocationHandler(yb);
+          //动态代理的方式创建对象
+          Skill s = (Skill)Proxy.newProxyInstance(yb.getClass().getClassLoader(), new Class[]{Skill.class}, mih);
+          s.sing("小幸运");
+          s.perform("陆贞传奇");
+          s.variety("天天向上");
+      }
+  ```
+
+#### 3.策略模式
+
+```java
+//策略接口
+public interface Strategy {
+  	void travel();
+}
+
+//具体策略执行者
+public class WalkStrategy implements Strategy{
+    @Override
+    public void travel() {
+        System.out.println("walk");
+    }
+}
+public class PlaneStrategy implements Strategy{
+    @Override
+    public void travel() {
+        System.out.println("plane");
+    }
+}
+public class SubwayStrategy implements Strategy{
+    @Override
+    public void travel() {
+        System.out.println("subway");
+    }
+}
+
+//策略包装类
+public class TravelContext implements Strategy{
+    Strategy strategy;
+
+    public Strategy getStrategy() {
+        return strategy;
+    }
+
+    public void setStrategy(Strategy strategy) {
+        this.strategy = strategy;
+    }
+    @Override
+    public void travel() {
+        if (strategy != null) {
+            strategy.travel();
+        }
+    }
+}
+
+//使用
+TravelContext travelContext=new TravelContext();
+travelContext.setStrategy(new PlaneStrategy());
+travelContext.travel();
+travelContext.setStrategy(new WalkStrategy());
+travelContext.travel();
+travelContext.setStrategy(new SubwayStrategy());
+travelContext.travel();
+```
+
+Android中典型应用比如动画的各种插值器 估值器 各种图片库的缓存策略具体实现者 和代理模式非常类似
+
+#### 4.建造者模式
+
+```java
+public class UserInfo {
+ 
+    private String name;
+    private int age;
+    private double height;
+    private double weight;
+ 	//以builder为参数的构造方法
+    private UserInfo(Builder builder) {
+        this.name = builder.name;
+        this.age = builder.age;
+        this.height = builder.height;
+        this.weight = builder.weight;
+    }
+ 
+    public String getName() {
+        return name;
+    }
+ 
+    public void setName(String name) {
+        this.name = name;
+    }
+ 
+    public int getAge() {
+        return age;
+    }
+ 
+    public void setAge(int age) {
+        this.age = age;
+    }
+ 
+    public double getHeight() {
+        return height;
+    }
+ 
+    public void setHeight(double height) {
+        this.height = height;
+    }
+ 
+    public double getWeight() {
+        return weight;
+    }
+ 
+    public void setWeight(double weight) {
+        this.weight = weight;
+    }
+ 	//静态内部类可以被外界直接实例化
+    static class Builder {
+        private String name;
+        private int age;
+        private double height;
+        private double weight;
+ 
+        public Builder name(String name) {
+            this.name = name;
+            //支持链式调用
+            return this;
+        }
+ 
+        public Builder age(int age) {
+            this.age = age;
+            return this;
+        }
+ 
+        public Builder height(double height) {
+            this.height = height;
+            return this;
+        }
+ 
+        public Builder weight(double weight) {
+            this.weight = weight;
+            return this;
+        }
+ 		//关键方法用于创建真正的实体对象
+        public UserInfo build() {
+            //静态内部类可以访问外部类的私有构造方法
+            return new UserInfo(this);
+        }
+    }
+}
+
+//使用
+UserInfo.Builder builder=new UserInfo.Builder();
+UserInfo person=builder
+    .name("张三")
+    .age(18)
+    .height(178.5)
+    .weight(67.4)
+    .build();
+//获取UserInfo的属性
+Log.e("userinfo","name = "+person.getName());
+```
+
+- 建造者模式在Android 中的应用比如说alterdialog okhttp 等等
+
+#### 5.单例模式
+
+1. 饿汉式
+
+   ```java
+   //优点：写法简单，线程安全。
+   //缺点：没有懒加载的效果，如果没有使用过的话会造成内存浪费。
+   public class EHanSingleton {
+       //在类初始化时，已经自行实例化,所以是线程安全的。
+       private static final EHanSingleton single =new EHanSingleton();
+    
+       public static EHanSingleton getInstance(){
+           return single;
+       }
+   }
+   ```
+
+2. 懒汉式
+
+   ```java
+   //优点：实现了懒加载的效果，线程安全。
+   //缺点：使用synchronized会造成不必要的同步开销，而且大部分时候我们是用不到同步的。
+   public class LanHanSingleton {
+       private static LanHanSingleton singleton;
+    
+       public static synchronized LanHanSingleton getSingleton(){
+           if (singleton == null){
+               singleton =new LanHanSingleton();
+           }
+           return singleton;
+       }
+   }
+   ```
+
+3. 双重校验锁懒汉
+
+   ```java
+   //优点：懒加载，线程安全，效率较高
+   public class DoubleCheckSingleton {
+       //volatile关键字保证有序性
+       private volatile static DoubleCheckSingleton singleton;
+    
+       public static DoubleCheckSingleton getInstance(){
+           if (singleton == null){//第一重空判断保证效率，排除掉不必要的加锁操作
+               synchronized (DoubleCheckSingleton.class){
+                   if (singleton == null){//第二重空判断保证假设两个线程同时走进了第一重判断后A线程优先拿到锁进入 完毕后B线程进入时不会重新new对象
+                       singleton =new DoubleCheckSingleton();
+                   }
+               }
+           }
+           return singleton;
+       }
+   }
+   ```
+
+4. 静态内部类
+
+   ```java
+   //优点：懒加载，线程安全，推荐使用
+   public class A {
+    
+       public static StaticInnerSigleton getInstance(){
+           return Holder.instance;
+       }
+       //构造方法私有
+       private A() {
+           
+       }
+    
+       //静态内部类
+       private static class Holder{
+           private static final A instance =new A();
+       }
+   }
+   ```
+
+#### 6.适配器模式
+
+- 意义
+
+  将一个类的接口变换成客户端所期待的另一种接口，从而使原本因接口不匹配而无法在一起工作的两个类能够在一起工作。Android中典型场景是listview viewpager 的adapter retrofit的calladapter等
+
+  ```java
+  //目标角色接口
+  public interface Target {
+      /**
+       * 目标角色的方法
+       */
+      void request();
+  }
+  
+  //目标角色实现类
+  public class ConcreteTarget implements Target {
+      @Override
+      public void request() {
+          log.info("目标角色的具体业务实现。{}", this.getClass().getSimpleName());
+      }
+  }
+  
+  //源角色
+  public class Adaptee {
+      /**
+       * 原有的业务逻辑
+       */
+      public void provider() {
+          log.info("原有的业务逻辑，{}", this.getClass().getSimpleName());
+      }
+  }
+  
+  //适配器
+  public class Adapter extends Adaptee implements Target {
+      @Override
+      public void request() {
+          log.info("我是装饰器：{}", this.getClass().getSimpleName());
+          super.provider();
+      }
+  }
+  
+  //使用
+  public static void main(String[] args) {
+          //原有业务逻辑
+          Target target = new ConcreteTarget();
+          target.request();
+          //增加了适配器角色后的业务逻辑
+          Target adapter = new Adapter();
+          adapter.request();
+  }
+  ```
+
+  
+
+#### 7.装饰者模式
+
+- 和代理模式很像 但是使用场景不同 区别如下
+
+  1. 扩展一个类的功能而不想使用继承
+  2. 动态添加或者隐藏类的功能。
+
+  ```java
+  //抽象类
+  public abstract class MilkyTea {
+   
+      public abstract void make();//制作奶茶
+   
+  }
+  
+  //实现类
+  public class Pearl extends MilkyTea {
+   
+      @Override
+      public void make() {
+          System.out.println("加入珍珠......");
+      }
+   
+  }
+  
+  //抽象装饰者类
+  public abstract class MilkyTeaDecorator extends MilkyTea {
+   
+      private MilkyTea mt;//保存要装饰的对象，使用抽象而不是具体，这样具体的类只有在执行的时候才找到
+   
+      public MilkyTeaDecorator(MilkyTea mt) {
+          this.mt = mt;
+      }
+   
+      @Override
+      public void make() {
+          if (mt != null) {
+              mt.make();
+          }
+      }
+  }
+  
+  //具体装饰者
+  public class JellyDecorator extends MilkyTeaDecorator {
+   
+      public JellyDecorator(MilkyTea mt) {
+          super(mt);
+      }
+   
+      @Override
+      public void make() {
+          super.make();
+          //此处即为加强的功能
+          System.out.println("加入果冻......");
+      }
+  }
+  
+  //使用
+  public static void main(String[] args) {
+          System.out.println("制作珍珠奶茶做法一开始......");
+          Pearl p = new Pearl();
+          JellyDecorator jd = new JellyDecorator(p);      
+          jd.make();
+  }
+  
+  ```
+
+  Android中典型应用如ContextWrapper
+
+#### 8.工厂模式
+
+- 简单工厂模式
+
+  ```java
+  //抽象产品类
+  public abstract class Video {
+      public abstract void produce();
+  }
+  
+  //具体产品类
+  public class PythonVideo extends Video {
+      @Override
+      public void produce() {
+          System.out.println("Python课程视频");
+      }
+  }
+  ublic class JavaVideo extends Video {
+      @Override
+      public void produce() {
+          System.out.println("Java课程视频");
+      }
+  }
+  
+  //工厂类
+  public class VideoFactory {
+      public Video getVideo(String type){
+          if("java".equalsIgnoreCase(type)){
+              return new JavaVideo();
+          }else if("python".equalsIgnoreCase(type)){
+              return new PythonVideo();
+          }
+          return null;
+      }
+  }
+  
+  //使用
+  public static void main(String[] args) {
+     VideoFactory videoFactory = new VideoFactory();
+     Video video = videoFactory.getVideo("java");
+     if(video == null){
+        return;
+     }
+     video.produce();
+  }
+  ```
+
+  *Android中典型使用是创建fragment时的工厂方法
+
+- 工厂方法模式
+
+  ```java
+  //在简单工厂的基础上加入抽象工厂类
+  public abstract class VideoFactory {
+      public abstract Video getVideo();
+  }
+  //具体工厂类
+  public class PythonVideoFactory extends VideoFactory {
+      @Override
+      public Video getVideo() {
+          return new PythonVideo();
+      }
+  }
+  public class JavaVideoFactory extends VideoFactory {
+      @Override
+      public Video getVideo() {
+          return new JavaVideo();
+      }
+  }
+  
+  //使用
+  public static void main(String[] args) {
+        VideoFactory videoFactory = new PythonVideoFactory();
+        Video video = videoFactory.getVideo();
+        video.produce();
+    }
+  ```
+
+  应用场景如retrofit的calladapter 就是加入了抽象产品calladapter和抽象工厂calladapter.factory 
+
+  如RxJava2CallAdapterFactory.create()
 
    
 

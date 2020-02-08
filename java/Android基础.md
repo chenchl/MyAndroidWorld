@@ -436,3 +436,216 @@
 
 
 #### View
+
+##### 1.Activity、PhoneWindow和DecorView
+
+![Activity、PhoneWindow和DecorView](https://imgconvert.csdnimg.cn/aHR0cHM6Ly91cGxvYWQtaW1hZ2VzLmppYW5zaHUuaW8vdXBsb2FkX2ltYWdlcy8xODM0MjQzMC03MjY3YjY3Y2EwYmMwOWI1LnBuZw)
+
+- PhoneWindow
+
+  每一个Activity都包含一个Window对象，Window对象通常由PhoneWindow实现，内部包含了一个DecorView对象，该DectorView对象是所有应用窗口(Activity界面)的根View。 简而言之，PhoneWindow类是把一个FrameLayout类即DecorView对象进行一定的包装，将它作为应用窗口的根View，并提供一组通用的窗口操作接口。每个Activity 均会创建一个PhoneWindow对象，是Activity和整个View系统交互的接口。
+
+- DecorView
+
+  该类是一个FrameLayout的子类,实际上就是对普通FrameLayout的包装扩展，比如说添加TitleBar(标题栏)，以及TitleBar上的滚动条等。其核心功能如下：
+
+  - Dispatch ViewRoot分发来的key、touch、trackball等外部事件
+
+  - DecorView有一个直接的子View，我们称之为System Layout,这个View是从系统的Layout.xml中解析出的，它包含当前UI的风格，如是否带title、是否带process bar等。可以称这些属性为Window decorations
+
+  - 作为PhoneWindow与ViewRoot之间的桥梁，ViewRoot通过DecorView设置窗口属性。
+
+  - DecorView只有一个子元素为LinearLayout。代表整个Window界面，包含通知栏，标题栏，内容显示栏三块区域。
+
+    TitleView：标题，可以设置requestWindowFeature(Window.FEATURE_NO_TITLE)取消
+
+    ContentView：是一个id为content的FrameLayout。我们平常在Activity使用的setContentView就是设置在这里
+
+##### 2.View事件分发机制
+
+![view事件分发机制](https://imgconvert.csdnimg.cn/aHR0cHM6Ly91cGxvYWQtaW1hZ2VzLmppYW5zaHUuaW8vdXBsb2FkX2ltYWdlcy8xODM0MjQzMC01ZjVkOGU2ZTgzMjNjMGRiLnBuZw)
+
+如图可分为三种情况 从上到下依次为activity viewgroup view
+
+- Activity
+
+  ```java
+  public boolean dispatchTouchEvent(MotionEvent ev) {
+          if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+              onUserInteraction();
+          }
+      	//获取到当前页面的phonewindow对象并交给decorview处理
+          if (getWindow().superDispatchTouchEvent(ev)) {
+              return true;
+          }
+          return onTouchEvent(ev);
+      }
+  ```
+
+  activity实现了window的callback接口 因此当wms将view事件分发到app时会从activity的dispatchTouchEvent方法开始事件分发流程 activity会将事件传递到当前页面的window实现类phonewindow
+
+  中 而phonewindow又将该事件传递给自己的内部变量decorview 本质上decorview是一个ViewGroup 因此后续的时间处理机制就和ViewGroup一致了
+
+- ViewGroup
+
+  1. 如果在viewgroup的dispatchTouchEvent中直接返回false则将事件交给父viewgroup的ontouchevent处理 
+  2. 传递给viewgroup的onInterceptTouchEvent去判断是否拦截事件 如果onInterceptTouchEvent返回true则交给viewgroup自身的ontouchevent去处理
+  3. onInterceptTouchEvent返回false的话则传递给子view或viewgroup的dispatchTouchEvent去处理
+
+- View
+
+  1. view的dispatchTouchEvent如果返回false则将事件回传给view的父viewgroup的ontouchevent处理
+  2. view的dispatchTouchEvent如果返回true则执行view自身的ontouchevent处理
+
+- View自身的事件分发流程
+
+  dispatchTouchEvent -> onTouch(setOnTouchListener) -> onTouchEvent -> onClick
+
+  onTouch和onTouchEvent的区别 两者都是在dispatchTouchEvent中调用的，onTouch优先于onTouchEvent，如果onTouch返回true，那么onTouchEvent则不执行，及onClick也不执行。
+
+  ```java
+  public boolean dispatchTouchEvent(MotionEvent event) {
+        	.....
+          final int actionMasked = event.getActionMasked();
+          if (actionMasked == MotionEvent.ACTION_DOWN) {
+              // Defensive cleanup for new gesture
+              stopNestedScroll();
+          }
+  		......
+          if (onFilterTouchEventForSecurity(event)) {
+              if ((mViewFlags & ENABLED_MASK) == ENABLED && handleScrollBarDragging(event)) {
+                  result = true;
+              }
+              //重点在这里 如果view设置了OnTouchListener优先处理onTouch
+              //当OnTouchListener的onTouch方法返回true的情况下 则根据&&熔断特征跳过
+              //onTouchEvent的执行
+              ListenerInfo li = mListenerInfo;
+              if (li != null && li.mOnTouchListener != null
+                      && (mViewFlags & ENABLED_MASK) == ENABLED
+                      && li.mOnTouchListener.onTouch(this, event)) {
+                  result = true;
+              }
+  
+              if (!result && onTouchEvent(event)) {
+                  result = true;
+              }
+          }
+  
+          if (actionMasked == MotionEvent.ACTION_UP ||
+                  actionMasked == MotionEvent.ACTION_CANCEL ||
+                  (actionMasked == MotionEvent.ACTION_DOWN && !result)) {
+              stopNestedScroll();
+          }
+  
+          return result;
+      }
+  ```
+
+- view的MotionEvent
+
+  - ACTION_DOWN
+
+    当屏幕检测到触点按下之后就会触发到这个事件(手指按下)
+
+  - ACTION_MOVE
+
+    当触点在屏幕上移动时触发(手指滑动)
+
+  - ACTION_UP
+
+    当触点松开时被触发(手指抬起)
+
+  - ACTION_CANCEL
+
+    不是由用户直接触发，由系统在需要的时候触发，例如当父view通过使函数onInterceptTouchEvent()返回true,从子view拿回处理事件的控制权时，就会给子view发一个ACTION_CANCEL事件，子view就再也不会收到后续事件了。
+
+    *比如B viewgroup包含A view 假设在A处手指按下 然后滑动出A 这时当滑动出A的瞬间A就会收到B发来的 ACTION_CANCEL事件 那么滑出后的ACTION_MOVE和ACTION_UP便不会传递给A去处理而是由B直接去处理
+
+##### 3.View绘制
+
+- Measure
+
+  - MeasureSpec mode
+
+    | 测量模式    | 描述                                                         |
+    | ----------- | ------------------------------------------------------------ |
+    | UNSPECIFIED | 父容器对当前view大小没有任何限制，当前view可取任意尺寸       |
+    | AT_MOST     | 当前尺寸是view能取得最大尺寸（对应wrap_content，不大于父容器） |
+    | EXACTLY     | 当前尺寸就是view的尺寸（对应match_parent、具体size数值）     |
+
+  - onMeasure
+
+    ```java
+    private int getMySize(int defaultSize, int measureSpec) {
+            int mySize = defaultSize;//默认大小
+        	
+    		//获取父viewgroup分发下来的测量模式和尺寸（实际上一般就是xml中定义的）
+            int mode = MeasureSpec.getMode(measureSpec);
+            int size = MeasureSpec.getSize(measureSpec);
+    
+            switch (mode) {
+                case MeasureSpec.UNSPECIFIED: {//如果没有指定大小，就设置为默认大小 
+                    mySize = defaultSize;
+                    break;
+                }
+                case MeasureSpec.AT_MOST: {//如果测量模式是最大取值为size
+                    //wrap_content
+                    mySize = size;
+                    break;
+                }
+                case MeasureSpec.EXACTLY: {//如果是固定的大小，那就不要去改变它
+                    //match_parent、具体size数值
+                    mySize = size;
+                    break;
+                }
+            }
+            return mySize;
+    }
+    
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            int width = getMySize(100, widthMeasureSpec);
+            int height = getMySize(100, heightMeasureSpec);
+    		//调用该方法将实际view尺寸设定给view
+            setMeasuredDimension(width, height);
+    }
+    ```
+
+- layout
+
+  viewgroup特有 在自定义viewgroup布局时会用到
+
+  - onLayout
+
+    ```java
+    Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            int count = getChildCount();
+            //记录当前的高度位置
+            int curHeight = t;
+            //将子View逐个摆放
+            for (int i = 0; i < count; i++) {
+                View child = getChildAt(i);
+                //拿到每个子view的宽高
+                int height = child.getMeasuredHeight();
+                int width = child.getMeasuredWidth();
+                //摆放子View，参数分别是子View矩形区域的左、上、右、下边
+                child.layout(l, curHeight, l + width, curHeight + height);
+                curHeight += height;
+            }
+        }
+    ```
+
+- draw
+
+  篇幅过长 参考[gcssloop自定义view教程](https://www.gcssloop.com/customview/CustomViewIndex/)
+
+#### 动画
+
+##### 1.帧动画
+
+##### 2.补间动画
+
+##### 3.属性动画
+
