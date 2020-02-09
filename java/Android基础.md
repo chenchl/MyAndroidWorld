@@ -561,7 +561,307 @@
 
     *比如B viewgroup包含A view 假设在A处手指按下 然后滑动出A 这时当滑动出A的瞬间A就会收到B发来的 ACTION_CANCEL事件 那么滑出后的ACTION_MOVE和ACTION_UP便不会传递给A去处理而是由B直接去处理
 
+###### View事件冲突解决方案
+
+- 外部拦截法
+
+  即父View根据需要对事件进行拦截。逻辑处理放在父View的onInterceptTouchEvent方法中。我们只需要重写父View的onInterceptTouchEvent方法，并根据逻辑需要做相应的拦截即可。
+
+  - 根据业务逻辑需要，在ACTION_MOVE方法中进行判断，如果需要父View处理则返回true，否则返回false，事件分发给子View去处理。
+  - ACTION_DOWN 一定返回false，不要拦截它，否则根据View事件分发机制，后续ACTION_MOVE 与 ACTION_UP事件都将默认交给父View去处理。
+  - 原则上ACTION_UP也需要返回false，如果返回true，并且滑动事件交给子View处理，那么子View将接收不到ACTION_UP事件，子View的onClick事件也无法触发。而父View不一样，如果父View在ACTION_MOVE中开始拦截事件，那么后续ACTION_UP也将默认交给父View处理。
+
+  ```java
+  public boolean onInterceptTouchEvent(MotionEvent event) {
+      boolean intercepted = false;
+      int x = (int) event.getX();
+      int y = (int) event.getY();
+      switch (event.getAction()) {
+          case MotionEvent.ACTION_DOWN: {
+              intercepted = false;
+              break;
+          }
+          case MotionEvent.ACTION_MOVE: {
+              //比如对于viewpager嵌套listview来说
+              //Math.abs(x-mLastXIntercept) >Math.abs(y-mLastYIntercept)
+              //表示X轴滑动距离大于Y轴 这时事件由viewpager自己去处理 所以拦截了
+              if (满足父容器的拦截要求) {
+                  intercepted = true;
+              } else {
+                  intercepted = false;
+              }
+              break;
+          }
+          case MotionEvent.ACTION_UP: {
+              intercepted = false;
+              break;
+          }
+          default:
+              break;
+      }
+      mLastXIntercept = x;
+      mLastYIntercept = y;
+      return intercepted;
+  }
+  
+  ```
+
+- 内部拦截法
+
+  即父View不拦截任何事件，所有事件都传递给子View，子View根据需要决定是自己消费事件还是给父View处理。这需要子View使用requestDisallowInterceptTouchEvent方法才能正常工作。
+
+  - 内部拦截法要求父View不能拦截ACTION_DOWN事件，由于ACTION_DOWN不受FLAG_DISALLOW_INTERCEPT标志位控制，一旦父容器拦截ACTION_DOWN那么所有的事件都不会传递给子View。
+  - 滑动策略的逻辑放在子View的dispatchTouchEvent方法的ACTION_MOVE中，如果父容器需要获取点击事件则调用 parent.requestDisallowInterceptTouchEvent(false)方法，让父容器去拦截事件。
+
+  ```java
+  //子view
+  public boolean dispatchTouchEvent(MotionEvent event) {
+      int x = (int) event.getX();
+      int y = (int) event.getY();
+  
+      switch (event.getAction()) {
+          case MotionEvent.ACTION_DOWN: {
+              //通知父view不要拦截后续事件
+              parent.requestDisallowInterceptTouchEvent(true);
+              break;
+          }
+          case MotionEvent.ACTION_MOVE: {
+              int deltaX = x - mLastX;
+              int deltaY = y - mLastY;
+              //比如对于viewpager嵌套listview来说
+              //Math.abs(deltaX) > Math.abs(deltaY)
+              //表示X轴滑动距离大于Y轴 这时事件要由viewpager自己去处理 所以通知viewpager拦截
+              if (父容器需要此类点击事件) {
+                  parent.requestDisallowInterceptTouchEvent(false);
+              }
+              break;
+          }
+          case MotionEvent.ACTION_UP: {
+              break;
+          }
+          default:
+              break;
+      }
+      mLastX = x;
+      mLastY = y;
+      return super.dispatchTouchEvent(event);
+  }
+  
+  //父view
+  public boolean onInterceptTouchEvent(MotionEvent event) {
+      int action = event.getAction();
+      //不能拦截down事件 否则子view收不到任何事件分发
+      if (action == MotionEvent.ACTION_DOWN) {
+          return false;
+      } else {
+          return true;
+      }
+  }
+  ```
+
 ##### 3.View绘制
+
+- 整体绘制流程
+
+  - 在**Activity**的`onResume`之后，当前**Activity**的**Window**对象中的View(DecorView)会被添加在**WindowManager**中。也就是在**ActivityThread**的`handleResumeActivity`方法中调用`wm.addView(decor, l);`将DecorView添加到**WindowManager**中；
+
+    **WindowManager**继承**ViewManager**，它的实现类为**WindowManagerImpl**，该类中的方法的具体实现是由其代理类**WindowManagerGlobal**实现的；
+
+    在它的`addView`方法中会创建**ViewRootImpl**的实例，然后将Window对应的View(DecorView)，ViewRootImpl，LayoutParams顺序添加在WindowManager中，最后将Window所对应的View设置给创建的ViewRootImpl，通过**ViewRootImpl**来更新界面并完成Window的添加过程；
+
+    ```java
+    public final class WindowManagerGlobal {
+        /*******部分代码省略**********/
+        public void addView(View view, ViewGroup.LayoutParams params,
+                Display display, Window parentWindow) {
+             /*******部分代码省略**********/
+            final WindowManager.LayoutParams wparams = (WindowManager.LayoutParams)params;
+            //声明ViwRootImpl
+            ViewRootImpl root;
+            View panelParentView = null;
+            synchronized (mLock) {
+                // Start watching for system property changes.
+                if (mSystemPropertyUpdater == null) {
+                    mSystemPropertyUpdater = new Runnable() {
+                        @Override public void run() {
+                            synchronized (mLock) {
+                                for (int i = mRoots.size() - 1; i >= 0; --i) {
+                                    mRoots.get(i).loadSystemProperties();
+                                }
+                            }
+                        }
+                    };
+                    SystemProperties.addChangeCallback(mSystemPropertyUpdater);
+                }
+                /*******部分代码省略**********/
+                //创建ViwRootImpl
+                root = new ViewRootImpl(view.getContext(), display);
+                view.setLayoutParams(wparams);
+                //将Window所对应的View、ViewRootImpl、LayoutParams顺序添加在WindowManager中
+                mViews.add(view);
+                mRoots.add(root);
+                mParams.add(wparams);
+            }
+            try {
+                //把将Window所对应的View设置给创建的ViewRootImpl
+                //通过ViewRootImpl来更新界面并完成Window的添加过程。
+                root.setView(view, wparams, panelParentView);
+            } catch (RuntimeException e) {
+                /*******部分代码省略**********/
+            }
+        }
+    }
+    ```
+
+  - ##### requestLayout()方法请求view绘制 最终会逐层向上传递给ViewRootImpl调用其requestLayout方法
+
+    ```java
+    public final class ViewRootImpl implements ViewParent,
+            View.AttachInfo.Callbacks, HardwareRenderer.HardwareDrawCallbacks {
+        /*******部分代码省略**********/
+        //请求对界面进行布局
+        @Override
+        public void requestLayout() {
+            if (!mHandlingLayoutInLayoutRequest) {
+                checkThread();
+                mLayoutRequested = true;
+                scheduleTraversals();
+            }
+        }
+        /*******部分代码省略**********/
+        //安排任务
+        void scheduleTraversals() {
+            if (!mTraversalScheduled) {
+                mTraversalScheduled = true;
+                mTraversalBarrier = mHandler.getLooper().postSyncBarrier();
+                //异步回调执行
+                mChoreographer.postCallback(
+                        Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
+                if (!mUnbufferedInputDispatch) {
+                    scheduleConsumeBatchedInput();
+                }
+                notifyRendererOfFramePending();
+            }
+        }
+    
+        final TraversalRunnable mTraversalRunnable = new TraversalRunnable();
+    
+        final class TraversalRunnable implements Runnable {
+            @Override
+            public void run() {
+                doTraversal();
+            }
+        }
+        //做任务
+        void doTraversal() {
+            if (mTraversalScheduled) {
+                mTraversalScheduled = false;
+                mHandler.getLooper().removeSyncBarrier(mTraversalBarrier);
+                if (mProfile) {
+                    Debug.startMethodTracing("ViewAncestor");
+                }
+                Trace.traceBegin(Trace.TRACE_TAG_VIEW, "performTraversals");
+                try {
+                    //执行任务
+                    performTraversals();
+                } finally {
+                    Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+                }
+    
+                if (mProfile) {
+                    Debug.stopMethodTracing();
+                    mProfile = false;
+                }
+            }
+        }
+    }
+    
+    //performTraversals
+    private void performTraversals() {
+            ......
+            //最外层的根视图的widthMeasureSpec和heightMeasureSpec由来
+            //lp.width和lp.height在创建ViewGroup实例时等于MATCH_PARENT
+            //这里的根视图即为mdecorview
+            int childWidthMeasureSpec = getRootMeasureSpec(mWidth, lp.width);
+            int childHeightMeasureSpec = getRootMeasureSpec(mHeight, lp.height);
+            ......
+            performMeasure(childWidthMeasureSpec, childHeightMeasureSpec);
+            ......
+            performLayout(lp, desiredWindowWidth, desiredWindowHeight);
+            ......
+            performDraw();
+            ......
+     }
+    ```
+
+    - performMeasure
+
+      ![performMeasure](https://upload-images.jianshu.io/upload_images/1797490-b959ad2d9c484d5e.png?imageMogr2/auto-orient/strip|imageView2/2/w/605/format/webp)
+
+      循环递归遍历整个view树从顶层依次开始measure到底层最终确定各view尺寸
+
+      执行顺序如下
+
+      ViewRootImpl的`performMeasure`;
+
+      DecorView(FrameLayout)的`measure`;
+
+      DecorView(FrameLayout)的`onMeasure`;
+
+      DecorView(FrameLayout)所有子View的`measure`；
+
+      `measure`操作完成后得到的是对每个**View**经测量过的**measuredWidth和measuredHeight**
+
+      `getMeasuredWidth()、getMeasuredHeight()`必须在`onMeasure`之后使用才有效；
+
+    - performLayout
+
+      执行顺序如下
+
+      ViewRootImpl的performLayout。
+
+      DecorView(FrameLayout)的layout方法。
+
+      DecorView(FrameLayout)的onLayout方法。
+
+      DecorView(FrameLayout)的layoutChildren方法。
+
+      DecorView(FrameLayout)的所有子View的Layout。
+
+      当**ViewRootImpl**的`performTraversals`中`performMeasure`执行完成以后会接着执行`performLayout`，**ViewRootImpl**调用`performLayout`执行Window对应的View的布局。
+
+      `View.layout`方法可被重载，`ViewGroup.layout`为**final**的不可重载，`ViewGroup.onLayout`为**abstract**的，子类必须重载实现自己的位置逻辑。`View.onLayout`方法是一个空方法。
+
+      layout操作完成之后得到的是对每个View进行位置分配后的mLeft、mTop、mRight、mBottom
+
+      `getWidth()与getHeight()`方法必须在`layout(int l, int t, int r, int b)`执行之后才有效。
+
+    - performDraw
+
+      执行顺序如下
+
+      ViewRootImpl的`performDraw`；
+
+      ViewRootImpl的`draw`；
+
+      ViewRootImpl的`drawSoftware`；
+
+      DecorView(FrameLayout)的`draw`方法；
+
+      DecorView(FrameLayout)的`dispatchDraw`方法；
+
+      DecorView(FrameLayout)的`drawChild`方法；
+
+      DecorView(FrameLayout)的所有子View的`draw`方法；
+
+      
+
+      作者：慕涵盛华
+      链接：https://www.jianshu.com/p/9abf88b7923b
+      来源：简书
+      著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+
+  - 
 
 - Measure
 
@@ -641,11 +941,69 @@
 
   篇幅过长 参考[gcssloop自定义view教程](https://www.gcssloop.com/customview/CustomViewIndex/)
 
+###### requestLayout()、invalidate()、postInvalidate()的区别
+
+![img](https://images2015.cnblogs.com/blog/554581/201706/554581-20170622000240538-1481075813.png)
+
+- requestLayout
+
+  requestLayout方法只会导致当前view的measure和layout，而draw不一定被执行，只有当view的位置发生改变才会执行draw方法，因此如果要使当前view重绘需要调用invalidate。
+
+- invalidate
+
+  当View的大小以及位置没有发生改变的时候,只会重新绘制该View而不会重新进行测量和布局。
+
+- postInvalidate
+
+  postInvalidate在非UI线程中调用 通过handler切换到主线程后 最终都会调用invalidateInternal
+
 #### 动画
 
 ##### 1.帧动画
 
 ##### 2.补间动画
+
+- 基础特征
+  - **功能：**可以实现移动、旋转、缩放、渐变四种效果以及这四种效果的组合形式。
+  - **实现形式**：xml和代码。
+  - **优点**：使用简单效果流畅。
+  - **缺点**：
+    1. 扩展性差，不支持自定义view
+    2. 动画只改变控件在屏幕的位置，不改变控件的实际属性。典型例子：Button执行完动画移动到另外位置，点击事件还在原来的地方。
+
+- 简单使用
+
+- 原理概述
+
+  1. 一般是调用View.startAnimation()开始动画
+
+     ```java
+     public void startAnimation(Animation animation) {
+             animation.setStartTime(Animation.START_ON_FIRST_FRAME);
+             setAnimation(animation);
+             invalidateParentCaches();
+             invalidate(true);
+         }
+     //首先使用setAnimation将传入的动画类设置给自身的内部变量
+     //然后调用invalidate刷新draw
+     
+     //boolean draw(Canvas canvas, ViewGroup parent, long drawingTime)
+     final Animation a = getAnimation();
+     if (a != null) {
+         more = applyLegacyAnimation(parent, drawingTime, a, scalingRequired);
+         concatMatrix = a.willChangeTransformationMatrix();
+         if (concatMatrix) {
+             mPrivateFlags3 |= PFLAG3_VIEW_IS_ANIMATING_TRANSFORM;
+         }
+         transformToApply = parent.getChildTransformation();
+     }
+     ```
+
+  2. 
+
+- 
+
+  
 
 ##### 3.属性动画
 
