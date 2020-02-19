@@ -199,7 +199,28 @@
        }
      ```
 
+#### rxjava
 
+- 简单原理
+
+  ```java
+   Observable.create(new ObservableOnSubscribe<String>() {
+              @Override
+              public void subscribe(ObservableEmitter<String> emitter) throws Exception {
+                  emitter.onNext(emitter+"123");
+                  
+              }
+          }).subscribe(new Consumer<String>() {
+              @Override
+              public void accept(String s) throws Exception {
+                  
+              }
+          });
+  ```
+
+  1. 第一步通过静态方法create
+
+- 线程切换
 
 #### retrofit
 

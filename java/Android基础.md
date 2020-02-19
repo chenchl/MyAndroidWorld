@@ -854,13 +854,6 @@
 
       DecorView(FrameLayout)的所有子View的`draw`方法；
 
-      
-
-      作者：慕涵盛华
-      链接：https://www.jianshu.com/p/9abf88b7923b
-      来源：简书
-      著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
-
   - 
 
 - Measure
@@ -956,6 +949,184 @@
 - postInvalidate
 
   postInvalidate在非UI线程中调用 通过handler切换到主线程后 最终都会调用invalidateInternal
+
+##### 4.View滑动
+
+- scrollTo/scrollBy
+
+  scrollTo（x，y） x y是相对于view中心将view中的内容滚动绝对距离 一次生效后不会再次改变位置
+
+  scrollby（x，y） x y是相对于内容自身滚动相对距离 可多次生效
+
+- scroller
+
+  用于平滑滑动和惯性滑动
+
+  1. 创建scroller实例
+  2. 调用startScroll()方法来初始化滚动数据并刷新界面invalite
+  3. 重写view的computeScroll()
+
+  ```java
+  public class ScrollerLayout extends ViewGroup {
+  
+      /**
+       * 用于完成滚动操作的实例
+       */
+      private Scroller mScroller;
+  
+      /**
+       * 判定为拖动的最小移动像素数
+       */
+      private int mTouchSlop;
+  
+      /**
+       * 手机按下时的屏幕坐标
+       */
+      private float mXDown;
+  
+      /**
+       * 手机当时所处的屏幕坐标
+       */
+      private float mXMove;
+  
+      /**
+       * 上次触发ACTION_MOVE事件时的屏幕坐标
+       */
+      private float mXLastMove;
+  
+      /**
+       * 界面可滚动的左边界
+       */
+      private int leftBorder;
+  
+      /**
+       * 界面可滚动的右边界
+       */
+      private int rightBorder;
+  
+      public ScrollerLayout(Context context, AttributeSet attrs) {
+          super(context, attrs);
+          // 第一步，创建Scroller的实例
+          mScroller = new Scroller(context);
+          ViewConfiguration configuration = ViewConfiguration.get(context);
+          // 获取TouchSlop值
+          mTouchSlop = ViewConfigurationCompat.getScaledPagingTouchSlop(configuration);
+      }
+  
+      @Override
+      protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+          super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+          int childCount = getChildCount();
+          for (int i = 0; i < childCount; i++) {
+              View childView = getChildAt(i);
+              // 为ScrollerLayout中的每一个子控件测量大小
+              measureChild(childView, widthMeasureSpec, heightMeasureSpec);
+          }
+      }
+  
+      @Override
+      protected void onLayout(boolean changed, int l, int t, int r, int b) {
+          if (changed) {
+              int childCount = getChildCount();
+              for (int i = 0; i < childCount; i++) {
+                  View childView = getChildAt(i);
+                  // 为ScrollerLayout中的每一个子控件在水平方向上进行布局
+                  childView.layout(i * childView.getMeasuredWidth(), 0, (i + 1) * childView.getMeasuredWidth(), childView.getMeasuredHeight());
+              }
+              // 初始化左右边界值
+              leftBorder = getChildAt(0).getLeft();
+              rightBorder = getChildAt(getChildCount() - 1).getRight();
+          }
+      }
+  
+      @Override
+      public boolean onInterceptTouchEvent(MotionEvent ev) {
+          switch (ev.getAction()) {
+              case MotionEvent.ACTION_DOWN:
+                  mXDown = ev.getRawX();
+                  mXLastMove = mXDown;
+                  break;
+              case MotionEvent.ACTION_MOVE:
+                  mXMove = ev.getRawX();
+                  float diff = Math.abs(mXMove - mXDown);
+                  mXLastMove = mXMove;
+                  // 当手指拖动值大于TouchSlop值时，认为应该进行滚动，拦截子控件的事件
+                  if (diff > mTouchSlop) {
+                      return true;
+                  }
+                  break;
+          }
+          return super.onInterceptTouchEvent(ev);
+      }
+  
+      @Override
+      public boolean onTouchEvent(MotionEvent event) {
+          switch (event.getAction()) {
+              case MotionEvent.ACTION_MOVE://拦截事件后自身onTouchEvent处理
+                  mXMove = event.getRawX();
+                  int scrolledX = (int) (mXLastMove - mXMove);//手指滑动距离
+                  if (getScrollX() + scrolledX < leftBorder) {//滑动到最左边
+                      scrollTo(leftBorder, 0);
+                      return true;
+                  } else if (getScrollX() + getWidth() + scrolledX > rightBorder) {//滑动到最右边
+                      scrollTo(rightBorder - getWidth(), 0);
+                      return true;
+                  }
+                  //相对于当前内容位置滑动手指一动距离
+                  scrollBy(scrolledX, 0);
+                  mXLastMove = mXMove;
+                  break;
+              case MotionEvent.ACTION_UP:
+                  // 当手指抬起时，根据当前的滚动值来判定应该滚动到哪个子控件的界面
+                  int targetIndex = (getScrollX() + getWidth() / 2) / getWidth();
+                  int dx = targetIndex * getWidth() - getScrollX();
+                  // 第二步，调用startScroll()方法来初始化滚动数据并刷新界面
+                  //记录当前位置和要滑动的距离
+                  mScroller.startScroll(getScrollX(), 0, dx, 0);
+                  //关键点必须调用invalidate刷新否则不会触发computeScroll
+                  invalidate();
+                  break;
+          }
+          return super.onTouchEvent(event);
+      }
+  
+      @Override
+      public void computeScroll() {
+          // 第三步，重写computeScroll()方法，并在其内部完成平滑滚动的逻辑
+          if (mScroller.computeScrollOffset()) {//需要进行滑动处理
+              //滑动到指定的绝对位置点
+              scrollTo(mScroller.getCurrX(), mScroller.getCurrY());
+              //刷新
+              invalidate();
+          }
+      }
+  }
+  ```
+
+- 动画
+
+  使用属性动画和补间动画均可 区别就是这两种动画本身的区别
+
+- 修改布局参数
+
+  修改布局参数后让父viewgroup在调用子viewlayout时修改位置
+
+- 父布局使用layout修改view布局位置
+
+  原理同修改布局参数 只是把逻辑挪到了父viewgroup去实现
+
+- viewDragHelper
+
+  android自带的view拖动辅助类 可实现复杂的view拖动 弹性回弹 组合滑动的效果
+
+##### 5.View相关小知识点
+
+- getX和getRawX区别
+
+  getX表示触摸点距离自身左边界的距离
+  getRawX表示触摸点距离屏幕左边界的距离
+
+- 
 
 #### 动画
 
